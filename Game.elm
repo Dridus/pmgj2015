@@ -3,6 +3,7 @@ import Gamepad
 import Gamepad (Gamepad)
 import Gamepad.XBox as XB
 import Graphics.Collage as C
+import Graphics.Element as E
 import Graphics.Element (Element)
 import List
 import Maybe
@@ -209,6 +210,11 @@ displayGoing (w, h) timeDelta { first, second } =
         stageScaleXf = T2D.scale stageScale
         stageTranslationXf = T2D.translation (cameraX + negate (stageDim.x / 2.0)) (negate (stageDim.y / 2.0))
 
+        background = C.group 
+            [ C.move (stageDim.x / 2.0 + negate cameraX * 0.2, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/background.jpg"
+            , C.move (stageDim.x / 2.0 + negate cameraX * 0.01, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/huge-trees.png"
+            ]
+
         reticle pg =
             case pg.aim of
                 Just a -> C.groupTransform (T2D.multiply (T2D.rotation a) (T2D.translation 3.0 0.0)) [C.filled Color.black <| C.circle 0.1]
@@ -224,11 +230,11 @@ displayGoing (w, h) timeDelta { first, second } =
                 [ reticle pg, C.filled color <| C.rect 0.5 2.0 ]
         stage =
             C.groupTransform (T2D.multiply stageScaleXf stageTranslationXf)
-                [ C.move (stageDim.x / 2, stageDim.y / 2) <| C.filled Color.gray <| C.rect stageDim.x stageDim.y
+                [ background --C.move (stageDim.x / 2, stageDim.y / 2) <| C.filled Color.gray <| C.rect stageDim.x stageDim.y
                 , player Color.red first
                 , rope first
                 , player Color.blue second
                 , rope second
                 ]
         hud = C.group [] -- [C.toForm <| Text.centered <| Text.fromString <| toString first]
-    in C.collage w h [ stage, hud ]
+    in C.collage w h [ C.filled Color.black <| C.rect (toFloat w) (toFloat h), stage, hud ]
