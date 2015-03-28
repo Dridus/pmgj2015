@@ -22,7 +22,9 @@ type alias PlayerControls = { move : Vect, aim : Vect, shoot : Bool, jump : Bool
 type alias Controls = { first : PlayerControls, second : PlayerControls }
 type alias Input = { timeDelta : Float, controls : Controls }
 type GameState = Preparing | Going GoingState | Dancing DancingState | Won
-type alias GoingState = { first : PlayerGoing, second : PlayerGoing }
+type alias TreeInstance = { style : TreeStyle, x : Float }
+type alias TreeStyle = { path : String, dim : Vect }
+type alias GoingState = { first : PlayerGoing, second : PlayerGoing, trees : List TreeInstance }
 type alias VelPos = { vel : Vect, pos : Vect }
 type alias Grapple = { vp : VelPos, fixed : Bool }
 type alias PlayerGoing =
@@ -33,8 +35,26 @@ type alias PlayerGoing =
     }
 type alias DancingState = {}
 
+tree1 : TreeStyle
+tree1 = { path = "Assets/tree1.png", dim = { x = 566, y = 1080 } }
+tree2 : TreeStyle
+tree2 = { path = "Assets/tree2.png", dim = { x = 537, y = 1080 } }
+tree3 : TreeStyle
+tree3 = { path = "Assets/tree3.png", dim = { x = 325, y = 1080 } }
+
 initialState : GameState
-initialState = Going { first = initialPlayerGoing, second = initialPlayerGoing }
+initialState = Going
+    { first  = initialPlayerGoing
+    , second = initialPlayerGoing
+    , trees  = [ { style = tree1, x = 20.0 }
+               , { style = tree2, x = 30.0 }
+               , { style = tree3, x = 42.0 }
+               , { style = tree2, x = 51.0 }
+               , { style = tree3, x = 57.0 }
+               , { style = tree1, x = 64.0 }
+               ]
+    }
+
 initialPlayerGoing : PlayerGoing
 initialPlayerGoing =
     { aim      = Nothing
@@ -47,7 +67,7 @@ stageDim : Vect
 stageDim = Vect 50.0 30.0
 
 groundY : Float
-groundY = 1.0
+groundY = 0.0
 
 gravityForce : Float
 gravityForce = 9.8
@@ -106,7 +126,7 @@ stepGame { timeDelta, controls } state =
         Going gs ->
             let newFirst = stepPlayerGoing timeDelta controls.first gs.first
                 newSecond = stepPlayerGoing timeDelta controls.second gs.second
-            in Going { first = newFirst, second = newSecond }
+            in Going { gs | first <- newFirst, second <- newSecond }
         other -> other
 
 applyVelocity : Float -> Vect -> Vect -> Vect
@@ -202,18 +222,25 @@ display (w, h) timeDelta state =
             Text.asText other
 
 displayGoing : (Int, Int) -> Float -> GoingState -> Element
-displayGoing (w, h) timeDelta { first, second } =
+displayGoing (w, h) timeDelta state =
     let
         stageScale = toFloat (w+5) / stageDim.x
-        cameraX = negate ((first.vp.pos.x + second.vp.pos.x) / 2) + stageDim.y / 2.0
+        cameraX = negate ((state.first.vp.pos.x + state.second.vp.pos.x) / 2) + stageDim.y / 2.0
 
         stageScaleXf = T2D.scale stageScale
         stageTranslationXf = T2D.translation (cameraX + negate (stageDim.x / 2.0)) (negate (stageDim.y / 2.0))
 
         background = C.group 
             [ C.move (stageDim.x / 2.0 + negate cameraX * 0.2, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/background.jpg"
-            , C.move (stageDim.x / 2.0 + negate cameraX * 0.01, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/huge-trees.png"
+            , C.move (stageDim.x / 2.0 + negate cameraX * 0.1, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/huge-trees.png"
             ]
+
+        trees =
+            C.group <| List.map tree state.trees
+        tree { style, x } =
+            let sizeInStage = { x = stageDim.y * (style.dim.x / style.dim.y), y = stageDim.y }
+                (width, height) = Vector.toTupleTruncate sizeInStage
+            in C.moveX x <| C.move (Vector.toTuple <| Vector.scale 0.5 <| sizeInStage) <| C.toForm <| E.image width height style.path
 
         reticle pg =
             case pg.aim of
@@ -231,10 +258,11 @@ displayGoing (w, h) timeDelta { first, second } =
         stage =
             C.groupTransform (T2D.multiply stageScaleXf stageTranslationXf)
                 [ background --C.move (stageDim.x / 2, stageDim.y / 2) <| C.filled Color.gray <| C.rect stageDim.x stageDim.y
-                , player Color.red first
-                , rope first
-                , player Color.blue second
-                , rope second
+                , trees
+                , player Color.red state.first
+                , rope state.first
+                , player Color.blue state.second
+                , rope state.second
                 ]
         hud = C.group [] -- [C.toForm <| Text.centered <| Text.fromString <| toString first]
     in C.collage w h [ C.filled Color.black <| C.rect (toFloat w) (toFloat h), stage, hud ]

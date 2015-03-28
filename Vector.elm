@@ -7,6 +7,9 @@ type alias Vect = { x : Float, y : Float }
 toTuple : Vect -> (Float, Float)
 toTuple { x, y } = (x, y)
 
+toTupleTruncate : Vect -> (Int ,Int)
+toTupleTruncate { x, y } = (truncate x, truncate y)
+
 scalar : (Float -> Float) -> Vect -> Vect
 scalar f { x, y } = { x = f x, y = f y }
 
