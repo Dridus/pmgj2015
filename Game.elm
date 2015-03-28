@@ -26,10 +26,9 @@ type alias VelPos = { vel : Vect, pos : Vect }
 type alias Grapple = { vp : VelPos, fixed : Bool }
 type alias PlayerGoing =
     { aim      : Maybe Float
-    , normMove : Vect
     , vp       : VelPos
-    , jump     : Vect
     , grapple  : Maybe Grapple
+    , jump     : Bool
     }
 type alias DancingState = {}
 
@@ -38,38 +37,44 @@ initialState = Going { first = initialPlayerGoing, second = initialPlayerGoing }
 initialPlayerGoing : PlayerGoing
 initialPlayerGoing =
     { aim      = Nothing
-    , normMove = Vect 0 0
     , vp       = { vel = Vect 0 0, pos = Vect 0 groundY }
-    , jump     = Vector.zero
     , grapple  = Nothing
+    , jump     = False
     }
 
 stageDim : Vect
-stageDim = Vect 1000.0 400.0
+stageDim = Vect 50.0 30.0
 
 groundY : Float
-groundY = 40.0
+groundY = 1.0
 
-airRest : Float
-airRest = 1.0
+gravityForce : Float
+gravityForce = 9.8
 
-airSpeed : Float
-airSpeed = 50.0
+gravityVect : Vect
+gravityVect = Vect 0.0 (negate gravityForce)
 
-groundRest : Float
-groundRest = 0.1
+dragCoefficient : Float
+dragCoefficient = 1.1
 
-groundSpeed : Float
-groundSpeed = 100.0
+playerArea : Float
+playerArea = 1.0
 
-gravity : Vect
-gravity = Vect 0.0 -60.0
+airDensity : Float
+airDensity = 1.293
+
+runForce : Float
+runForce = 20.0
+
+runTopSpeed : Float
+runTopSpeed = 20.0
+
+stoppingForce : Float
+stoppingForce = 10.0
 
 jumpForce : Float
-jumpForce = 100.0
+jumpForce = 20.0
 
-jumpRest : Float
-jumpRest = 5.0
 
 main : Signal Element
 main = Gamepad.withPolling (Signal.constant True) <| \ _ ->
@@ -103,31 +108,50 @@ stepGame { timeDelta, controls } state =
             in Going { first = newFirst, second = newSecond }
         other -> other
 
-stepVP : Float -> VelPos -> VelPos
-stepVP timeDelta old =
-    { old | pos <- Vector.vadd old.pos (Vector.smul old.vel <| timeDelta / 1000.0) }
+applyVelocity : Float -> Vect -> Vect -> Vect
+applyVelocity timeDelta vel pos =
+    Vector.vadd pos (Vector.scale (timeDelta / 1000.0) vel)
 
 stepPlayerGoing : Float -> PlayerControls -> PlayerGoing -> PlayerGoing
 stepPlayerGoing timeDelta pc pg =
-    let newAim = if Vector.magnitude pc.aim >= 0.7 then Just (Vector.angle <| Vector.normalize pc.aim) else Nothing
+    let
+
+        newAim = if Vector.magnitude pc.aim >= 0.7 then Just (Vector.angle <| Vector.normalize pc.aim) else Nothing
+
         onGround = pg.vp.pos.y <= groundY
-        normMoveStick = Vector.clampMagnitude 1.0 pc.move
-        newNormMove =
+        controlForceVector = Vector.clampMagnitude 1.0 pc.move
+
+        didJump = pc.jump && not pg.jump
+        jumpVect = if didJump && onGround then Vect 0.0 jumpForce else Vector.zero
+
+        forceTime : Vect -> Vect
+        forceTime vec = Vector.scale (timeDelta / 1000.0) vec
+
+        applyDrag : Vect -> Vect
+        applyDrag vec =
+            let vel = Vector.magnitude vec
+                dragForce = 0.1 * 0.5 * airDensity * (vel * vel) * dragCoefficient * playerArea
+            in Vector.vadd (forceTime <| Vector.scale dragForce << Vector.normalize << Vector.negate <| vec) vec
+
+        applyRunningForce : Vect -> Vect
+        applyRunningForce vec =
             if onGround
-                then Vector.timeTween timeDelta groundRest pg.normMove { x = normMoveStick.x, y = 0.0 }
-                else Vector.timeTween timeDelta airRest    pg.normMove { x = normMoveStick.x, y = min 0.0 normMoveStick.y }
-        newVel =
-            Vector.vadd newJump <|
-                if onGround
-                    then Vector.smul newNormMove groundSpeed
-                    else    Vector.smul newNormMove airSpeed
-                         |> Vector.vadd gravity
-        newJump =
-            if onGround
-                then if pc.jump
-                    then Vect 0.0 jumpForce
-                    else Vector.zero
-                else Vector.timeTween timeDelta jumpRest pg.jump Vector.zero
+                then
+                    if Vector.magnitude vec < runTopSpeed
+                        then Vector.vadd (forceTime <| Vector.scale runForce controlForceVector) vec
+                        else vec
+                else
+                    vec -- FIXME air control
+
+        applyStoppingForce : Vect -> Vect
+        applyStoppingForce vec =
+            if onGround && Vector.zeroish controlForceVector && not (Vector.zeroish vec)
+                then Vector.vadd vec <| forceTime <| { x = (negate vec.x * stoppingForce), y = 0.0 }
+                else vec
+
+        applyRope : Vect -> Vect
+        applyRope vec = vec -- FIXME
+        {-
         ropeClamp pos =
             case pg.grapple of
                 Just { vp, fixed } ->
@@ -137,24 +161,35 @@ stepPlayerGoing timeDelta pc pg =
                             let mag = Vector.magnitude (Vector.vsub pg.vp.pos vp.pos)
                             in Vector.smul (Vector.normalize (Vector.vsub pos vp.pos)) mag
                 Nothing -> pos
-        groundClamp pos =
-            { pos | y <- max groundY pos.y }
-        steppedVP = let vp = pg.vp in stepVP timeDelta { vp | vel <- newVel }
-        newVP = { steppedVP | pos <- groundClamp <| ropeClamp <| steppedVP.pos }
-        newGrapple =
-            case pg.grapple of
-                Just g ->
-                    if g.fixed
-                        then pg.grapple
-                        else Just { g | vp <- stepVP timeDelta g.vp }
-                Nothing ->
-                    Nothing
+        -}
+
+        newVel : Vect
+        newVel = pg.vp.vel
+            |> Vector.vadd jumpVect -- FIXME? because instantaneous, don't apply time scaling
+            |> applyRunningForce
+            |> Vector.vadd (forceTime gravityVect)
+            |> applyDrag
+            |> applyStoppingForce
+            |> applyRope
+
+        groundClamp pos = { pos | y <- max groundY pos.y }
+
+        oldVP = pg.vp
+        steppedVP = { pos = applyVelocity timeDelta newVel oldVP.pos, vel = newVel }
+
+        applyGrappleVelocity = Maybe.map <| \ g ->
+            if g.fixed
+                then g
+                else { g | vp <- { pos = applyVelocity timeDelta g.vp.vel g.vp.pos, vel = g.vp.vel } }
+
+        newGrapple = pg.grapple
+            |> applyGrappleVelocity
+
     in
-        { aim      = newAim
-        , normMove = newNormMove
-        , vp       = newVP
-        , jump     = newJump
-        , grapple  = newGrapple
+        { aim     = newAim
+        , vp      = { steppedVP | pos <- groundClamp steppedVP.pos }
+        , jump    = pc.jump
+        , grapple = newGrapple
         }
 
 display : (Int, Int) -> Float -> GameState -> Element
@@ -167,20 +202,28 @@ display (w, h) timeDelta state =
 
 displayGoing : (Int, Int) -> Float -> GoingState -> Element
 displayGoing (w, h) timeDelta { first, second } =
-    let stageScale = toFloat (w+5) / stageDim.x
+    let
+        stageScale = toFloat (w+5) / stageDim.x
+        cameraX = negate ((first.vp.pos.x + second.vp.pos.x) / 2) + stageDim.y / 2.0
+
+        stageScaleXf = T2D.scale stageScale
+        stageTranslationXf = T2D.translation (cameraX + negate (stageDim.x / 2.0)) (negate (stageDim.y / 2.0))
+
         reticle pg =
             case pg.aim of
-                Just a -> C.groupTransform (T2D.multiply (T2D.rotation a) (T2D.translation 50.0 0.0)) [C.filled Color.black <| C.circle 2.0]
+                Just a -> C.groupTransform (T2D.multiply (T2D.rotation a) (T2D.translation 3.0 0.0)) [C.filled Color.black <| C.circle 0.1]
                 Nothing -> C.group []
+
         rope pg =
             case pg.grapple of
                 Just { vp } -> C.traced C.defaultLine <| C.segment (Vector.toTuple pg.vp.pos) (Vector.toTuple vp.pos)
                 Nothing -> C.group []
+
         player color pg =
-            C.move (Vector.toTuple pg.vp.pos) <| C.group
-                [ reticle pg, C.filled color <| C.square 10 ]
+            C.move (Vector.toTuple pg.vp.pos) <| C.moveY 2.0 <| C.group
+                [ reticle pg, C.filled color <| C.rect 0.5 2.0 ]
         stage =
-            C.groupTransform (T2D.multiply (T2D.scale stageScale) (T2D.translation -(stageDim.x / 2.0) -(stageDim.y / 2.0)))
+            C.groupTransform (T2D.multiply stageScaleXf stageTranslationXf)
                 [ C.move (stageDim.x / 2, stageDim.y / 2) <| C.filled Color.gray <| C.rect stageDim.x stageDim.y
                 , player Color.red first
                 , rope first

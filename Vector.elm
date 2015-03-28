@@ -1,5 +1,7 @@
 module Vector where
 
+import Basics
+
 type alias Vect = { x : Float, y : Float }
 
 toTuple : Vect -> (Float, Float)
@@ -8,11 +10,8 @@ toTuple { x, y } = (x, y)
 scalar : (Float -> Float) -> Vect -> Vect
 scalar f { x, y } = { x = f x, y = f y }
 
-smul : Vect -> Float -> Vect
-smul { x, y } s = { x = x*s, y = y*s }
-
-sdiv : Vect -> Float -> Vect
-sdiv { x, y } s = { x = x/s, y = y/s }
+scale : Float -> Vect -> Vect
+scale s { x, y } = { x = x*s, y = y*s }
 
 vadd : Vect -> Vect -> Vect
 vadd u v = { x = u.x + v.x, y = u.y + v.y }
@@ -29,16 +28,19 @@ dist u v = magnitude (vsub v u)
 clampMagnitude : Float -> Vect -> Vect
 clampMagnitude maxMag v = 
     let mag = magnitude v
-        norm = if mag == 0 then zero else sdiv v mag
-    in smul norm (min mag (magnitude v))
+        norm = if mag == 0 then zero else scale (1/mag) v
+    in scale (min mag (magnitude v)) norm
 
 normalize : Vect -> Vect
 normalize v =
     let mag = magnitude v
-    in if mag == 0 then zero else sdiv v mag
+    in if mag == 0 then zero else scale (1/mag) v
 
 zeroish : Vect -> Bool
 zeroish = flip (<) 0.1 << magnitude
+
+negate : Vect -> Vect
+negate { x, y } = { x = Basics.negate x, y = Basics.negate y }
 
 dot : Vect -> Vect -> Float
 dot u v = u.x * v.x + u.y * v.y
@@ -52,7 +54,7 @@ angleDelta u v = angle v - angle u
 timeTween : Float -> Float -> Vect -> Vect -> Vect
 timeTween deltaMS targetS from to =
     let factor = min 1.0 (deltaMS / (targetS * 1000.0))
-        result = vadd from (smul (vsub to from) factor)
+        result = vadd from (scale factor (vsub to from))
     in if dist result to < 0.01 then to else result
 
 xUnit : Vect
