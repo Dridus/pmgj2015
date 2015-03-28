@@ -8,6 +8,7 @@ import Maybe
 import Signal
 import Signal (Signal, (<~), (~))
 import Text
+import Vector
 import Window
 
 
@@ -39,6 +40,7 @@ showStick size pos =
         formatPos = (round <| x * 1000.0, round <| y * 1000.0)
     in C.group
         [ C.outlined defaultLine <| C.square size
+        , C.move (0.0, size/2.0 - 20) <| C.toForm <| Text.centered <| Text.fromString <| toString (Vector.magnitude <| Vector.Vect x y)
         , C.move (x/2.0 * size, negate <| y/2.0 * size) <| C.group
             [ C.filled Color.red <| C.circle 5.0
             , C.move (0.0, -13.0) <| C.toForm <| Text.centered <| Text.fromString <| toString formatPos
