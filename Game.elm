@@ -70,12 +70,31 @@ stoppingForce = 10.0
 jumpForce : Float
 jumpForce = 20.0
 
-type alias PlayerControls = { move : Vect, aim : Vect, shoot : Bool, jump : Bool }
-type alias Controls = { first : PlayerControls, second : PlayerControls }
-type alias Input = { timeDelta : Float, controls : Controls }
+grappleForce : Float
+grappleForce = 50.0
+
+type alias PlayerControls =
+    { move  : Vect
+    , aim   : Vect
+    , shoot : Bool
+    , jump  : Bool
+    }
+
+type alias Controls =
+    { first : PlayerControls
+    , second : PlayerControls
+    }
+
+type alias Input =
+    { timeDelta : Float
+    , controls  : Controls
+    }
+
 type GameState = Preparing | Going GoingState | Dancing DancingState | Won
+
 type alias TreeInstance = { style : TreeStyle, x : Float }
 type alias TreeStyle = { path : String, dim : Vect }
+
 type alias GoingState =
     { first        : PlayerGoing
     , second       : PlayerGoing
@@ -85,6 +104,7 @@ type alias GoingState =
     , minX         : Float
     , maxX         : Float
     }
+
 type alias VelPos = { vel : Vect, pos : Vect }
 type alias Grapple = { vp : VelPos, fixed : Bool }
 type alias PlayerGoing =
@@ -92,7 +112,9 @@ type alias PlayerGoing =
     , vp       : VelPos
     , grapple  : Maybe Grapple
     , jump     : Bool
+    , shoot    : Bool
     }
+
 type alias DancingState = {}
 
 tree1 : TreeStyle
@@ -150,6 +172,7 @@ initialPlayerGoing =
     , vp       = { vel = Vect 0 0, pos = Vect 0 groundY }
     , grapple  = Nothing
     , jump     = False
+    , shoot    = False
     }
 
 computeVisibleTrees : Array TreeInstance -> Float -> List TreeInstance
@@ -198,37 +221,41 @@ stepPlayerGoing : Float -> PlayerControls -> PlayerGoing -> PlayerGoing
 stepPlayerGoing timeDelta pc pg =
     let
 
+        newAim : Maybe Float
         newAim = if Vector.magnitude pc.aim >= 0.7 then Just (Vector.angle <| Vector.normalize pc.aim) else Nothing
 
+        onGround : Bool
         onGround = pg.vp.pos.y <= groundY
+
+        controlForceVector : Vect
         controlForceVector = Vector.clampMagnitude 1.0 pc.move
 
+        didJump : Bool
         didJump = pc.jump && not pg.jump
-        jumpVect = if didJump && onGround then Vect 0.0 jumpForce else Vector.zero
 
-        forceTime : Vect -> Vect
-        forceTime vec = Vector.scale (timeDelta / 1000.0) vec
+        jumpVect : Vect
+        jumpVect = if didJump && onGround then Vect 0.0 jumpForce else Vector.zero
 
         applyDrag : Vect -> Vect
         applyDrag vec =
             let vel = Vector.magnitude vec
                 dragForce = 0.5 * airDensity * (vel * vel) * dragCoefficient * playerArea
-            in Vector.vadd (forceTime <| Vector.scale dragForce << Vector.normalize << Vector.negate <| vec) vec
+            in Vector.addTimeScaled timeDelta (Vector.scale dragForce << Vector.normalize << Vector.negate <| vec) vec
 
         applyControlForce : Vect -> Vect
         applyControlForce vec =
             if onGround
                 then
                     if Vector.magnitude vec < runTopSpeed
-                        then Vector.vadd (forceTime <| Vector.scale runForce controlForceVector) vec
+                        then Vector.addTimeScaled timeDelta (Vector.scale runForce controlForceVector) vec
                         else vec
                 else
-                    Vector.vadd (forceTime <| Vector.scale airControlForce controlForceVector) vec
+                    Vector.addTimeScaled timeDelta (Vector.scale airControlForce controlForceVector) vec
 
         applyStoppingForce : Vect -> Vect
         applyStoppingForce vec =
             if onGround && Vector.zeroish controlForceVector && not (Vector.zeroish vec)
-                then Vector.vadd vec <| forceTime <| { x = (negate vec.x * stoppingForce), y = 0.0 }
+                then Vector.addTimeScaled timeDelta { x = (negate vec.x * stoppingForce), y = 0.0 } vec
                 else vec
 
         applyRope : Vect -> Vect
@@ -249,28 +276,50 @@ stepPlayerGoing timeDelta pc pg =
         newVel = pg.vp.vel
             |> Vector.vadd jumpVect -- FIXME? because instantaneous, don't apply time scaling
             |> applyControlForce
-            |> Vector.vadd (forceTime gravityVect)
+            |> Vector.addTimeScaled timeDelta gravityVect
             |> applyDrag
             |> applyStoppingForce
             |> applyRope
 
+        groundClamp : Vect -> Vect
         groundClamp pos = { pos | y <- max groundY pos.y }
 
-        oldVP = pg.vp
-        steppedVP = { pos = Vector.timeScale timeDelta newVel oldVP.pos, vel = newVel }
+        steppedVP : VelPos
+        steppedVP = { pos = Vector.addTimeScaled timeDelta newVel pg.vp.pos, vel = newVel }
 
-        applyGrappleVelocity = Maybe.map <| \ g ->
+        didShoot : Bool
+        didShoot = pc.shoot && not pg.shoot
+
+        newGrapple : Maybe Grapple
+        newGrapple =
+            if didShoot
+                then
+                    case pg.grapple of
+                        Just g -> Nothing
+                        Nothing ->
+                            case newAim of
+                                Just a -> Just
+                                    { vp =
+                                        { vel = Vect grappleForce 0.0 |> Vector.rotate a
+                                        , pos = pg.vp.pos
+                                        }
+                                    , fixed = False
+                                    }
+                                Nothing -> Nothing
+                else
+                    Maybe.map applyGrapplePhysics pg.grapple
+
+        applyGrapplePhysics : Grapple -> Grapple
+        applyGrapplePhysics g =
             if g.fixed
                 then g
-                else { g | vp <- { pos = Vector.timeScale timeDelta g.vp.vel g.vp.pos, vel = g.vp.vel } }
-
-        newGrapple = pg.grapple
-            |> applyGrappleVelocity
+                else { g | vp <- { pos = Vector.addTimeScaled timeDelta g.vp.vel g.vp.pos, vel = g.vp.vel } }
 
     in
         { aim     = newAim
         , vp      = { steppedVP | pos <- groundClamp steppedVP.pos }
         , jump    = pc.jump
+        , shoot   = pc.shoot
         , grapple = newGrapple
         }
 
@@ -335,12 +384,17 @@ displayGoing (w, h) timeDelta state =
 
         reticle pg =
             case pg.aim of
-                Just a -> C.groupTransform (T2D.multiply (T2D.rotation a) (T2D.translation 3.0 0.0)) [C.filled Color.black <| C.circle 0.1]
+                Just a ->
+                    C.groupTransform
+                        (T2D.multiply (T2D.rotation a) (T2D.translation 2.0 0.0))
+                        [C.filled (Color.rgba 255 255 255 0.75) <| C.circle 0.05]
                 Nothing -> C.group []
 
         rope pg =
             case pg.grapple of
-                Just { vp } -> C.traced C.defaultLine <| C.segment (Vector.toTuple pg.vp.pos) (Vector.toTuple vp.pos)
+                Just { vp } ->
+                       C.segment (Vector.toTuple pg.vp.pos) (Vector.toTuple vp.pos)
+                    |> C.traced (C.defaultLine |> \ l -> { l | color <- Color.rgba 255 255 128 0.75 })
                 Nothing -> C.group []
 
         player color pg =

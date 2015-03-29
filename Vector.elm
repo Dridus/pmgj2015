@@ -54,6 +54,11 @@ angle v = atan2 v.y v.x
 angleDelta : Vect -> Vect -> Float
 angleDelta u v = angle v - angle u
 
+rotate : Float -> Vect -> Vect
+rotate a { x, y } =
+    { x = x * cos a - y * sin a
+    , y = x * sin a + y * cos a }
+
 timeTween : Float -> Float -> Vect -> Vect -> Vect
 timeTween deltaMS targetS from to =
     let factor = min 1.0 (deltaMS / (targetS * 1000.0))
@@ -67,7 +72,11 @@ yUnit = { x = 0.0, y = 1.0 }
 zero : Vect
 zero = { x = 0.0, y = 0.0 }
 
-timeScale : Float -> Vect -> Vect -> Vect
-timeScale timeDelta vel pos =
-    vadd pos (scale (timeDelta / 1000.0) vel)
+addTimeScaled : Float -> Vect -> Vect -> Vect
+addTimeScaled timeDelta vel =
+    vadd (timeScaled timeDelta vel)
+
+timeScaled : Float -> Vect -> Vect
+timeScaled timeDelta =
+    scale (timeDelta / 1000.0)
 
