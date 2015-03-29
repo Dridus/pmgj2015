@@ -71,7 +71,13 @@ jumpForce : Float
 jumpForce = 20.0
 
 grappleForce : Float
-grappleForce = 50.0
+grappleForce = 40.0
+
+grappleOffset : Vect
+grappleOffset = Vect 0.0 1.75
+
+maxRopeLength : Float
+maxRopeLength = 7.0
 
 type alias PlayerControls =
     { move  : Vect
@@ -284,11 +290,35 @@ stepPlayerGoing timeDelta pc pg =
         groundClamp : Vect -> Vect
         groundClamp pos = { pos | y <- max groundY pos.y }
 
-        steppedVP : VelPos
-        steppedVP = { pos = Vector.addTimeScaled timeDelta newVel pg.vp.pos, vel = newVel }
+        newPos : Vect
+        newPos = pg.vp.pos
+            |> Vector.addTimeScaled timeDelta newVel
+            |> groundClamp
 
         didShoot : Bool
         didShoot = pc.shoot && not pg.shoot
+
+        applyRopeLength : Vect -> VelPos -> VelPos
+        applyRopeLength anchor danglingVP =
+            let
+
+                rel           = Vector.vsub danglingVP.pos anchor
+                newRopeLength = Vector.magnitude rel
+                excessDist    = max 0.0 <| newRopeLength - maxRopeLength
+
+                rotateAngularDistance = (Vector.magnitude danglingVP.vel * (timeDelta / 1000.0)) / maxRopeLength
+                posRotateAngle = if Vector.angleDelta rel danglingVP.vel < 0 then negate rotateAngularDistance else rotateAngularDistance
+                newDanglingPos = Vector.vadd anchor <| Vector.rotate posRotateAngle <| Vector.scale maxRopeLength <| Vector.normalize rel
+
+                velRotateAngle = if Vector.angleDelta rel Vector.yUnit > 0 then Vector.angle rel - pi/2 - rotateAngularDistance else Vector.angle rel + pi/2 + rotateAngularDistance
+                magnitudeLoss = Vector.magnitude <| Vector.vsub danglingVP.pos newDanglingPos
+                newDanglingVel = Vector.xUnit
+                    |> Vector.rotate velRotateAngle
+                    |> Vector.scale (Vector.magnitude danglingVP.vel - magnitudeLoss)
+            in
+                if excessDist > 0
+                    then { vel = newDanglingVel, pos = newDanglingPos }
+                    else danglingVP
 
         newGrapple : Maybe Grapple
         newGrapple =
@@ -301,23 +331,33 @@ stepPlayerGoing timeDelta pc pg =
                                 Just a -> Just
                                     { vp =
                                         { vel = Vect grappleForce 0.0 |> Vector.rotate a
-                                        , pos = pg.vp.pos
+                                        , pos = Vector.vadd grappleOffset pg.vp.pos
                                         }
                                     , fixed = False
                                     }
                                 Nothing -> Nothing
                 else
-                    Maybe.map applyGrapplePhysics pg.grapple
+                    case pg.grapple of
+                        Just g -> applyGrapplePhysics g
+                        Nothing -> Nothing
 
-        applyGrapplePhysics : Grapple -> Grapple
+        applyGrapplePhysics : Grapple -> Maybe Grapple
         applyGrapplePhysics g =
             if g.fixed
-                then g
-                else { g | vp <- { pos = Vector.addTimeScaled timeDelta g.vp.vel g.vp.pos, vel = g.vp.vel } }
+                then Just g
+                else
+                    let newGVel = g.vp.vel
+                            |> Vector.addTimeScaled timeDelta gravityVect
+                            |> applyDrag
+                        newGVP = applyRopeLength newPos { vel = newGVel, pos = Vector.addTimeScaled timeDelta newGVel g.vp.pos }
+                    in
+                        if newGVP.pos.y <= groundY
+                            then Nothing
+                            else Just { g | vp <- newGVP }
 
     in
         { aim     = newAim
-        , vp      = { steppedVP | pos <- groundClamp steppedVP.pos }
+        , vp      = { vel = newVel, pos = newPos }
         , jump    = pc.jump
         , shoot   = pc.shoot
         , grapple = newGrapple
@@ -393,12 +433,13 @@ displayGoing (w, h) timeDelta state =
         rope pg =
             case pg.grapple of
                 Just { vp } ->
-                       C.segment (Vector.toTuple pg.vp.pos) (Vector.toTuple vp.pos)
-                    |> C.traced (C.defaultLine |> \ l -> { l | color <- Color.rgba 255 255 128 0.75 })
+                       C.segment (Vector.toTuple <| Vector.vadd grappleOffset pg.vp.pos) (Vector.toTuple vp.pos)
+                    |> C.traced ropeStyle
+
                 Nothing -> C.group []
 
         player color pg =
-            C.move (Vector.toTuple pg.vp.pos) <| C.moveY 2.0 <| C.group
+            C.move (Vector.toTuple pg.vp.pos) <| C.moveY 1.0 <| C.group
                 [ reticle pg, C.filled color <| C.rect 0.5 2.0 ]
         stage =
             C.groupTransform (T2D.multiply stageScaleXf stageTranslationXf)
@@ -420,7 +461,23 @@ displayGoing (w, h) timeDelta state =
         , hud
         ]
 
+ropeStyle : C.LineStyle
+ropeStyle =
+    let l = C.defaultLine
+    in
+        { l
+        | color <- Color.rgba 255 255 128 0.75
+        , width <- 0.05
+        }
 
+debugStyle : C.LineStyle
+debugStyle =
+    let l = C.defaultLine
+    in
+        { l
+        | color <- Color.rgba 255 0 0 0.75
+        , width <- 0.05
+        }
 
 main : Signal Element
 main = Gamepad.withPolling (Signal.constant True) <| \ _ ->
