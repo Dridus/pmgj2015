@@ -110,9 +110,10 @@ makeTreeCycle : Random.Seed -> (Array TreeInstance, Random.Seed)
 makeTreeCycle seed =
     let
 
-        halfError = treeIntervalError / 2.0
-        xGenerator = Random.float (negate halfError) halfError
+        halfError      = treeIntervalError / 2.0
+        xGenerator     = Random.float (negate halfError) halfError
         styleGenerator = Random.int 0 (List.length treeStyles - 1)
+
         generateTree i s =
             let (xVariance, s') = Random.generate xGenerator s
                 (styleIndex, s'') = Random.generate styleGenerator s'
@@ -123,12 +124,11 @@ makeTreeCycle seed =
             in (tree, s'')
 
     in    Array.initialize numberOfTreesInCycle identity
-       |> Array.foldr (\ i (ts, s) -> let (t, s') = generateTree i s in (t :: ts, s'))
-                      ([], seed)
+       |> Array.foldr (\ i (ts, s) -> let (t, s') = generateTree i s in (t :: ts, s')) ([], seed)
        |> (\ (treeList, seed) -> (Array.fromList treeList, seed))
 
 initialState : GameState
-initialState = 
+initialState =
     let
         treeCycle = fst <| makeTreeCycle (Random.initialSeed 0 {- FIXME -})
     in Going
@@ -152,7 +152,7 @@ initialPlayerGoing =
 computeVisibleTrees : Array TreeInstance -> Float -> List TreeInstance
 computeVisibleTrees cycle centerX =
     let
-        mod = (toFloat (floor (centerX / treeCyclePeriod))) * treeCyclePeriod
+        mod = roundDownModulus treeCyclePeriod centerX
         cX  = centerX - mod
 
         candidateTree t =
@@ -279,29 +279,52 @@ display (w, h) timeDelta state =
         other ->
             Text.asText other
 
+rearUnscaledDim : Vect
+rearUnscaledDim = Vect 3766 1080
+
+middleUnscaledDim : Vect
+middleUnscaledDim = Vect 4693 1080
+
+roundDownModulus : Float -> Float -> Float
+roundDownModulus modulus f =
+    f / modulus |> floor |> toFloat |> (*) modulus
+
 displayGoing : (Int, Int) -> Float -> GoingState -> Element
 displayGoing (w, h) timeDelta state =
     let
         stageScale     = toFloat (w+5) / stageDim.x
         halfStageWidth = stageDim.x / 2.0
-        cameraX        = negate state.centerX + halfStageWidth
+        cameraOffset   = Vect (negate state.centerX) (negate <| stageDim.y / 2.0)
 
         stageScaleXf       = T2D.scale stageScale
-        stageTranslationXf = T2D.translation (cameraX + negate (halfStageWidth)) (negate (stageDim.y / 2.0))
+        stageTranslationXf = T2D.translation cameraOffset.x cameraOffset.y
 
-        background = 
-            let width = 3766 * (stageDim.y / 1080)
-                height = stageDim.y
-                widthTrunc = truncate width
-                heightTrunc = truncate height
-                rear = C.toForm <| E.image widthTrunc heightTrunc "Assets/background.jpg"
-                middle = C.toForm <| E.image widthTrunc heightTrunc "Assets/huge-trees.png"
+        stageToScene = Vector.scale stageScale >> Vector.vadd cameraOffset
 
-                rearModularStart = (toFloat (floor ((state.centerX / 2) / width))) * width
-                rearX = rearModularStart + (state.centerX / 2)
-                middleModularStart = (toFloat (floor ((state.centerX / 4) / width))) * width
-                middleX = middleModularStart + (state.centerX / 4)
+        background =
+            let
+                backgroundScale = toFloat h / rearUnscaledDim.y
+
+                rearDim         = Vector.scale backgroundScale rearUnscaledDim
+                rearDimTrunc    = Vector.toTupleTruncate rearDim
+                rear            = C.toForm <| E.image (fst rearDimTrunc) (snd rearDimTrunc) "Assets/background.jpg"
+
+                middleDim       = Vector.scale backgroundScale middleUnscaledDim
+                middleDimTrunc  = Vector.toTupleTruncate middleDim
+                middle          = C.toForm <| E.image (fst middleDimTrunc) (snd middleDimTrunc) "Assets/huge-trees.png"
+
+                viewOffset = stageToScene cameraOffset
+                rearX      = roundDownModulus rearDim.x (negate viewOffset.x) + viewOffset.x / 4.0
+                rearX2     = if rearX >= 0 then rearX - rearDim.x else rearX + rearDim.x
+                middleX    = roundDownModulus middleDim.x (negate viewOffset.x) + viewOffset.x / 2.0
+                middleX2   = if middleX >= 0 then middleX - middleDim.x else middleX + middleDim.x
             in C.group
+                [ C.moveX rearX rear
+                , C.moveX rearX2 rear
+                , C.moveX middleX middle
+                , C.moveX middleX2 middle
+                ]
+                {-
                 [ C.move (halfStageWidth + rearX, stageDim.y / 2.0) rear
                 , C.move (halfStageWidth + rearX + width, stageDim.y / 2.0) rear
                 , C.move (halfStageWidth + rearX - width, stageDim.y / 2.0) rear
@@ -309,6 +332,7 @@ displayGoing (w, h) timeDelta state =
                 , C.move (halfStageWidth + middleX + width, stageDim.y / 2.0) middle
                 , C.move (halfStageWidth + middleX - width, stageDim.y / 2.0) middle
                 ]
+                -}
 
         trees = C.group <| List.map tree <| state.visibleTrees
         tree { style, x } =
@@ -330,8 +354,7 @@ displayGoing (w, h) timeDelta state =
                 [ reticle pg, C.filled color <| C.rect 0.5 2.0 ]
         stage =
             C.groupTransform (T2D.multiply stageScaleXf stageTranslationXf)
-                [ background --C.move (stageDim.x / 2, stageDim.y / 2) <| C.filled Color.gray <| C.rect stageDim.x stageDim.y
-                , trees
+                [ trees
                 , player Color.red state.first
                 , rope state.first
                 , player Color.blue state.second
@@ -342,7 +365,12 @@ displayGoing (w, h) timeDelta state =
                 -- C.toForm <| Text.centered <| Text.style (Text.defaultStyle |> \ s -> { s | color <- Color.white }) <| Text.fromString <| toString (treeModular centerX)
                 -- [C.toForm <| Text.centered <| Text.fromString <| toString first]
             ]
-    in C.collage w h [ C.filled Color.black <| C.rect (toFloat w) (toFloat h), stage, hud ]
+    in C.collage w h
+        [ C.filled Color.black <| C.rect (toFloat w) (toFloat h)
+        , background
+        , stage
+        , hud
+        ]
 
 
 
