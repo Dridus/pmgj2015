@@ -317,9 +317,9 @@ displayGoing (w, h) timeDelta state =
                 middle          = C.toForm <| E.image (fst middleDimTrunc) (snd middleDimTrunc) "Assets/huge-trees.png"
 
                 viewOffset = stageToScene cameraOffset
-                rearX      = roundDownModulus rearDim.x (negate viewOffset.x) + viewOffset.x / 4.0
+                rearX      = roundDownModulus rearDim.x (negate <| viewOffset.x / 4.0) + viewOffset.x / 4.0
                 rearX2     = if rearX >= 0 then rearX - rearDim.x else rearX + rearDim.x
-                middleX    = roundDownModulus middleDim.x (negate viewOffset.x) + viewOffset.x / 2.0
+                middleX    = roundDownModulus middleDim.x (negate <| viewOffset.x / 2.0) + viewOffset.x / 2.0
                 middleX2   = if middleX >= 0 then middleX - middleDim.x else middleX + middleDim.x
             in C.group
                 [ C.moveX rearX rear
@@ -327,15 +327,6 @@ displayGoing (w, h) timeDelta state =
                 , C.moveX middleX middle
                 , C.moveX middleX2 middle
                 ]
-                {-
-                [ C.move (halfStageWidth + rearX, stageDim.y / 2.0) rear
-                , C.move (halfStageWidth + rearX + width, stageDim.y / 2.0) rear
-                , C.move (halfStageWidth + rearX - width, stageDim.y / 2.0) rear
-                , C.move (halfStageWidth + middleX, stageDim.y / 2.0) middle
-                , C.move (halfStageWidth + middleX + width, stageDim.y / 2.0) middle
-                , C.move (halfStageWidth + middleX - width, stageDim.y / 2.0) middle
-                ]
-                -}
 
         trees = C.group <| List.map tree <| state.visibleTrees
         tree { style, x } =
