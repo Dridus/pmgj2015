@@ -1,4 +1,7 @@
+import Array
+import Array (Array)
 import Color
+import Debug
 import Gamepad
 import Gamepad (Gamepad)
 import Gamepad.XBox as XB
@@ -8,6 +11,7 @@ import Graphics.Element (Element)
 import List
 import Maybe
 import Maybe (Maybe(Just, Nothing))
+import Random
 import Signal
 import Signal (Signal, (<~), (~))
 import Text
@@ -18,13 +22,25 @@ import Vector
 import Vector (Vect)
 import Window
 
+numberOfTreesInCycle : Int
+numberOfTreesInCycle = 8
+
+treeNominalInterval : Float
+treeNominalInterval = 20.0
+
+treeIntervalError : Float
+treeIntervalError = 3.0
+
+treeCyclePeriod : Float
+treeCyclePeriod = toFloat numberOfTreesInCycle * treeNominalInterval
+
 type alias PlayerControls = { move : Vect, aim : Vect, shoot : Bool, jump : Bool }
 type alias Controls = { first : PlayerControls, second : PlayerControls }
 type alias Input = { timeDelta : Float, controls : Controls }
 type GameState = Preparing | Going GoingState | Dancing DancingState | Won
 type alias TreeInstance = { style : TreeStyle, x : Float }
 type alias TreeStyle = { path : String, dim : Vect }
-type alias GoingState = { first : PlayerGoing, second : PlayerGoing, trees : List TreeInstance }
+type alias GoingState = { first : PlayerGoing, second : PlayerGoing, trees : Array TreeInstance }
 type alias VelPos = { vel : Vect, pos : Vect }
 type alias Grapple = { vp : VelPos, fixed : Bool }
 type alias PlayerGoing =
@@ -36,23 +52,45 @@ type alias PlayerGoing =
 type alias DancingState = {}
 
 tree1 : TreeStyle
-tree1 = { path = "Assets/tree1.png", dim = { x = 566, y = 1080 } }
+tree1 = { path = "Assets/tree1.png", dim = { x = 566 * (stageDim.y / 1080), y = stageDim.y } }
 tree2 : TreeStyle
-tree2 = { path = "Assets/tree2.png", dim = { x = 537, y = 1080 } }
+tree2 = { path = "Assets/tree2.png", dim = { x = 537 * (stageDim.y / 1080), y = stageDim.y } }
 tree3 : TreeStyle
-tree3 = { path = "Assets/tree3.png", dim = { x = 325, y = 1080 } }
+tree3 = { path = "Assets/tree3.png", dim = { x = 325 * (stageDim.y / 1080), y = stageDim.y } }
+
+treeStyles : List TreeStyle
+treeStyles =
+    [ tree1
+    , tree2
+    , tree3
+    ]
+
+makeTreeCycle : Random.Seed -> (Array TreeInstance, Random.Seed)
+makeTreeCycle seed =
+    let
+
+        halfError = treeIntervalError / 2.0
+        xGenerator = Random.float (negate halfError) halfError
+        styleGenerator = Random.int 0 (List.length treeStyles - 1)
+        generateTree i s =
+            let (xVariance, s') = Random.generate xGenerator s
+                (styleIndex, s'') = Random.generate styleGenerator s'
+                tree =
+                    { style = List.head <| List.drop styleIndex treeStyles
+                    , x = toFloat i * treeNominalInterval + xVariance
+                    }
+            in (tree, s'')
+
+    in    Array.initialize numberOfTreesInCycle identity
+       |> Array.foldr (\ i (ts, s) -> let (t, s') = generateTree i s in (t :: ts, s'))
+                      ([], seed)
+       |> (\ (treeList, seed) -> (Array.fromList treeList, seed))
 
 initialState : GameState
 initialState = Going
     { first  = initialPlayerGoing
     , second = initialPlayerGoing
-    , trees  = [ { style = tree1, x = 20.0 }
-               , { style = tree2, x = 30.0 }
-               , { style = tree3, x = 42.0 }
-               , { style = tree2, x = 51.0 }
-               , { style = tree3, x = 57.0 }
-               , { style = tree1, x = 64.0 }
-               ]
+    , trees  = fst <| makeTreeCycle (Random.initialSeed 0 {- FIXME -})
     }
 
 initialPlayerGoing : PlayerGoing
@@ -64,7 +102,7 @@ initialPlayerGoing =
     }
 
 stageDim : Vect
-stageDim = Vect 50.0 30.0
+stageDim = Vect 25.0 15.0
 
 groundY : Float
 groundY = 0.0
@@ -85,7 +123,7 @@ airDensity : Float
 airDensity = 1.293
 
 runForce : Float
-runForce = 20.0
+runForce = 10.0
 
 runTopSpeed : Float
 runTopSpeed = 20.0
@@ -178,7 +216,7 @@ stepPlayerGoing timeDelta pc pg =
                 Just { vp, fixed } ->
                     if not fixed
                         then pos
-                        else 
+                        else
                             let mag = Vector.magnitude (Vector.vsub pg.vp.pos vp.pos)
                             in Vector.smul (Vector.normalize (Vector.vsub pos vp.pos)) mag
                 Nothing -> pos
@@ -225,22 +263,38 @@ displayGoing : (Int, Int) -> Float -> GoingState -> Element
 displayGoing (w, h) timeDelta state =
     let
         stageScale = toFloat (w+5) / stageDim.x
-        cameraX = negate ((state.first.vp.pos.x + state.second.vp.pos.x) / 2) + stageDim.y / 2.0
+        halfStageWidth = stageDim.x / 2.0
+        centerX = ((state.first.vp.pos.x + state.second.vp.pos.x) / 2)
+        cameraX = negate centerX + halfStageWidth
+        minX = centerX - halfStageWidth
+        maxX = centerX + halfStageWidth
+
+        treeModularStart f = (toFloat (floor (f / treeCyclePeriod))) * treeCyclePeriod
+        treeModular f = f - treeModularStart f
 
         stageScaleXf = T2D.scale stageScale
-        stageTranslationXf = T2D.translation (cameraX + negate (stageDim.x / 2.0)) (negate (stageDim.y / 2.0))
+        stageTranslationXf = T2D.translation (cameraX + negate (halfStageWidth)) (negate (stageDim.y / 2.0))
 
-        background = C.group 
-            [ C.move (stageDim.x / 2.0 + negate cameraX * 0.2, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/background.jpg"
-            , C.move (stageDim.x / 2.0 + negate cameraX * 0.1, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/huge-trees.png"
+        background = C.group
+            [ C.move (halfStageWidth + negate cameraX * 0.2, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/background.jpg"
+            , C.move (halfStageWidth + negate cameraX * 0.1, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/huge-trees.png"
             ]
 
         trees =
-            C.group <| List.map tree state.trees
+            let
+                modularStart = treeModularStart centerX
+                modularCenterX = treeModular centerX
+
+                treeToRender t =
+                    let visibleDistance = halfStageWidth + t.style.dim.x
+                    in if | abs( t.x                    - modularCenterX) < visibleDistance -> Just <| tree { t | x <- t.x + modularStart }
+                          | abs((t.x - treeCyclePeriod) - modularCenterX) < visibleDistance -> Just <| tree { t | x <- t.x + modularStart - treeCyclePeriod }
+                          | abs((t.x + treeCyclePeriod) - modularCenterX) < visibleDistance -> Just <| tree { t | x <- t.x + modularStart + treeCyclePeriod }
+                          | otherwise                                                       -> Nothing
+            in C.group <| Array.foldl (\ t fs -> treeToRender t |> Maybe.map (flip (::) fs) |> Maybe.withDefault fs) [] state.trees
         tree { style, x } =
-            let sizeInStage = { x = stageDim.y * (style.dim.x / style.dim.y), y = stageDim.y }
-                (width, height) = Vector.toTupleTruncate sizeInStage
-            in C.moveX x <| C.move (Vector.toTuple <| Vector.scale 0.5 <| sizeInStage) <| C.toForm <| E.image width height style.path
+            let (width, height) = Vector.toTupleTruncate style.dim
+            in C.moveX x <| C.moveY (style.dim.y / 2.0) <| C.toForm <| E.image width height style.path
 
         reticle pg =
             case pg.aim of
@@ -264,5 +318,9 @@ displayGoing (w, h) timeDelta state =
                 , player Color.blue state.second
                 , rope state.second
                 ]
-        hud = C.group [] -- [C.toForm <| Text.centered <| Text.fromString <| toString first]
+        hud = C.group
+            [
+                C.toForm <| Text.centered <| Text.style (Text.defaultStyle |> \ s -> { s | color <- Color.white }) <| Text.fromString <| toString (treeModular centerX)
+                -- [C.toForm <| Text.centered <| Text.fromString <| toString first]
+            ]
     in C.collage w h [ C.filled Color.black <| C.rect (toFloat w) (toFloat h), stage, hud ]
