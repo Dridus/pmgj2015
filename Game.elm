@@ -47,16 +47,19 @@ gravityVect : Vect
 gravityVect = Vect 0.0 (negate gravityForce)
 
 dragCoefficient : Float
-dragCoefficient = 1.1
+dragCoefficient = 0.5
 
 playerArea : Float
-playerArea = 1.0
+playerArea = 0.25
 
 airDensity : Float
 airDensity = 1.293
 
 runForce : Float
 runForce = 10.0
+
+airControlForce : Float
+airControlForce = 5.0
 
 runTopSpeed : Float
 runTopSpeed = 20.0
@@ -209,18 +212,18 @@ stepPlayerGoing timeDelta pc pg =
         applyDrag : Vect -> Vect
         applyDrag vec =
             let vel = Vector.magnitude vec
-                dragForce = 0.1 * 0.5 * airDensity * (vel * vel) * dragCoefficient * playerArea
+                dragForce = 0.5 * airDensity * (vel * vel) * dragCoefficient * playerArea
             in Vector.vadd (forceTime <| Vector.scale dragForce << Vector.normalize << Vector.negate <| vec) vec
 
-        applyRunningForce : Vect -> Vect
-        applyRunningForce vec =
+        applyControlForce : Vect -> Vect
+        applyControlForce vec =
             if onGround
                 then
                     if Vector.magnitude vec < runTopSpeed
                         then Vector.vadd (forceTime <| Vector.scale runForce controlForceVector) vec
                         else vec
                 else
-                    vec -- FIXME air control
+                    Vector.vadd (forceTime <| Vector.scale airControlForce controlForceVector) vec
 
         applyStoppingForce : Vect -> Vect
         applyStoppingForce vec =
@@ -245,7 +248,7 @@ stepPlayerGoing timeDelta pc pg =
         newVel : Vect
         newVel = pg.vp.vel
             |> Vector.vadd jumpVect -- FIXME? because instantaneous, don't apply time scaling
-            |> applyRunningForce
+            |> applyControlForce
             |> Vector.vadd (forceTime gravityVect)
             |> applyDrag
             |> applyStoppingForce
