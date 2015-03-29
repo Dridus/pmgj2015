@@ -34,13 +34,54 @@ treeIntervalError = 3.0
 treeCyclePeriod : Float
 treeCyclePeriod = toFloat numberOfTreesInCycle * treeNominalInterval
 
+stageDim : Vect
+stageDim = Vect 25.0 14.3388210
+
+groundY : Float
+groundY = 0.0
+
+gravityForce : Float
+gravityForce = 9.8
+
+gravityVect : Vect
+gravityVect = Vect 0.0 (negate gravityForce)
+
+dragCoefficient : Float
+dragCoefficient = 1.1
+
+playerArea : Float
+playerArea = 1.0
+
+airDensity : Float
+airDensity = 1.293
+
+runForce : Float
+runForce = 10.0
+
+runTopSpeed : Float
+runTopSpeed = 20.0
+
+stoppingForce : Float
+stoppingForce = 10.0
+
+jumpForce : Float
+jumpForce = 20.0
+
 type alias PlayerControls = { move : Vect, aim : Vect, shoot : Bool, jump : Bool }
 type alias Controls = { first : PlayerControls, second : PlayerControls }
 type alias Input = { timeDelta : Float, controls : Controls }
 type GameState = Preparing | Going GoingState | Dancing DancingState | Won
 type alias TreeInstance = { style : TreeStyle, x : Float }
 type alias TreeStyle = { path : String, dim : Vect }
-type alias GoingState = { first : PlayerGoing, second : PlayerGoing, trees : Array TreeInstance }
+type alias GoingState =
+    { first        : PlayerGoing
+    , second       : PlayerGoing
+    , treeCycle    : Array TreeInstance
+    , visibleTrees : List TreeInstance
+    , centerX      : Float
+    , minX         : Float
+    , maxX         : Float
+    }
 type alias VelPos = { vel : Vect, pos : Vect }
 type alias Grapple = { vp : VelPos, fixed : Bool }
 type alias PlayerGoing =
@@ -87,11 +128,18 @@ makeTreeCycle seed =
        |> (\ (treeList, seed) -> (Array.fromList treeList, seed))
 
 initialState : GameState
-initialState = Going
-    { first  = initialPlayerGoing
-    , second = initialPlayerGoing
-    , trees  = fst <| makeTreeCycle (Random.initialSeed 0 {- FIXME -})
-    }
+initialState = 
+    let
+        treeCycle = fst <| makeTreeCycle (Random.initialSeed 0 {- FIXME -})
+    in Going
+        { first        = initialPlayerGoing
+        , second       = initialPlayerGoing
+        , treeCycle    = treeCycle
+        , visibleTrees = computeVisibleTrees treeCycle 0.0
+        , centerX      = 0.0
+        , minX         = 0.0 - stageDim.x / 2.0
+        , maxX         = 0.0 + stageDim.x / 2.0
+        }
 
 initialPlayerGoing : PlayerGoing
 initialPlayerGoing =
@@ -101,75 +149,47 @@ initialPlayerGoing =
     , jump     = False
     }
 
-stageDim : Vect
-stageDim = Vect 25.0 15.0
+computeVisibleTrees : Array TreeInstance -> Float -> List TreeInstance
+computeVisibleTrees cycle centerX =
+    let
+        mod = (toFloat (floor (centerX / treeCyclePeriod))) * treeCyclePeriod
+        cX  = centerX - mod
 
-groundY : Float
-groundY = 0.0
+        candidateTree t =
+            let visibleDistance = stageDim.x / 2.0 + t.style.dim.x
+            in if | abs( t.x                    - cX) < visibleDistance -> Just <| { t | x <- t.x + mod }
+                  | abs((t.x - treeCyclePeriod) - cX) < visibleDistance -> Just <| { t | x <- t.x + mod - treeCyclePeriod }
+                  | abs((t.x + treeCyclePeriod) - cX) < visibleDistance -> Just <| { t | x <- t.x + mod + treeCyclePeriod }
+                  | otherwise                                           -> Nothing
 
-gravityForce : Float
-gravityForce = 9.8
-
-gravityVect : Vect
-gravityVect = Vect 0.0 (negate gravityForce)
-
-dragCoefficient : Float
-dragCoefficient = 1.1
-
-playerArea : Float
-playerArea = 1.0
-
-airDensity : Float
-airDensity = 1.293
-
-runForce : Float
-runForce = 10.0
-
-runTopSpeed : Float
-runTopSpeed = 20.0
-
-stoppingForce : Float
-stoppingForce = 10.0
-
-jumpForce : Float
-jumpForce = 20.0
-
-
-main : Signal Element
-main = Gamepad.withPolling (Signal.constant True) <| \ _ ->
-    display <~ Window.dimensions ~ delta ~ gameState
-
-delta     : Signal Float
-delta     = Time.fps 30
-gameState : Signal GameState
-gameState = Signal.foldp stepGame initialState input
-input     : Signal Input
-input     = Signal.sampleOn delta (Input <~ delta ~ controls)
-controls  : Signal Controls
-controls  = Controls <~ playerControls 0 ~ playerControls 1
-playerControls : Gamepad -> Signal PlayerControls
-playerControls controller =
-    let processStick = filterStick << flipStick << uncurry Vect
-        flipStick { x, y } = { x = x, y = negate y }
-        filterStick v = if Vector.magnitude v < 0.3 then Vector.zero else v
-    in PlayerControls
-            <~ (processStick <~ XB.leftStick controller)
-             ~ (processStick <~ XB.rightStick controller)
-             ~ XB.rb controller
-             ~ XB.a controller
+    in Array.foldl (\ t fs -> candidateTree t |> Maybe.map (flip (::) fs) |> Maybe.withDefault fs) [] cycle
 
 stepGame : Input -> GameState -> GameState
 stepGame { timeDelta, controls } state =
     case state of
-        Going gs ->
-            let newFirst = stepPlayerGoing timeDelta controls.first gs.first
-                newSecond = stepPlayerGoing timeDelta controls.second gs.second
-            in Going { gs | first <- newFirst, second <- newSecond }
+        Going gs -> stepGoing timeDelta controls gs
         other -> other
 
-applyVelocity : Float -> Vect -> Vect -> Vect
-applyVelocity timeDelta vel pos =
-    Vector.vadd pos (Vector.scale (timeDelta / 1000.0) vel)
+stepGoing : Float -> Controls -> GoingState -> GameState
+stepGoing timeDelta controls gs =
+    let
+
+        newFirst        = stepPlayerGoing timeDelta controls.first  gs.first
+        newSecond       = stepPlayerGoing timeDelta controls.second gs.second
+
+        newCenterX      = (newFirst.vp.pos.x + newSecond.vp.pos.x) / 2
+
+        newVisibleTrees = computeVisibleTrees gs.treeCycle newCenterX
+
+    in Going
+        { first        = newFirst
+        , second       = newSecond
+        , treeCycle    = gs.treeCycle
+        , visibleTrees = newVisibleTrees
+        , centerX      = newCenterX
+        , minX         = newCenterX - stageDim.x / 2.0
+        , maxX         = newCenterX + stageDim.x / 2.0
+        }
 
 stepPlayerGoing : Float -> PlayerControls -> PlayerGoing -> PlayerGoing
 stepPlayerGoing timeDelta pc pg =
@@ -234,12 +254,12 @@ stepPlayerGoing timeDelta pc pg =
         groundClamp pos = { pos | y <- max groundY pos.y }
 
         oldVP = pg.vp
-        steppedVP = { pos = applyVelocity timeDelta newVel oldVP.pos, vel = newVel }
+        steppedVP = { pos = Vector.timeScale timeDelta newVel oldVP.pos, vel = newVel }
 
         applyGrappleVelocity = Maybe.map <| \ g ->
             if g.fixed
                 then g
-                else { g | vp <- { pos = applyVelocity timeDelta g.vp.vel g.vp.pos, vel = g.vp.vel } }
+                else { g | vp <- { pos = Vector.timeScale timeDelta g.vp.vel g.vp.pos, vel = g.vp.vel } }
 
         newGrapple = pg.grapple
             |> applyGrappleVelocity
@@ -262,36 +282,35 @@ display (w, h) timeDelta state =
 displayGoing : (Int, Int) -> Float -> GoingState -> Element
 displayGoing (w, h) timeDelta state =
     let
-        stageScale = toFloat (w+5) / stageDim.x
+        stageScale     = toFloat (w+5) / stageDim.x
         halfStageWidth = stageDim.x / 2.0
-        centerX = ((state.first.vp.pos.x + state.second.vp.pos.x) / 2)
-        cameraX = negate centerX + halfStageWidth
-        minX = centerX - halfStageWidth
-        maxX = centerX + halfStageWidth
+        cameraX        = negate state.centerX + halfStageWidth
 
-        treeModularStart f = (toFloat (floor (f / treeCyclePeriod))) * treeCyclePeriod
-        treeModular f = f - treeModularStart f
-
-        stageScaleXf = T2D.scale stageScale
+        stageScaleXf       = T2D.scale stageScale
         stageTranslationXf = T2D.translation (cameraX + negate (halfStageWidth)) (negate (stageDim.y / 2.0))
 
-        background = C.group
-            [ C.move (halfStageWidth + negate cameraX * 0.2, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/background.jpg"
-            , C.move (halfStageWidth + negate cameraX * 0.1, stageDim.y / 2.0) <| C.toForm <| E.image (truncate <| stageDim.y * 3.487037) (truncate stageDim.y) "Assets/huge-trees.png"
-            ]
+        background = 
+            let width = 3766 * (stageDim.y / 1080)
+                height = stageDim.y
+                widthTrunc = truncate width
+                heightTrunc = truncate height
+                rear = C.toForm <| E.image widthTrunc heightTrunc "Assets/background.jpg"
+                middle = C.toForm <| E.image widthTrunc heightTrunc "Assets/huge-trees.png"
 
-        trees =
-            let
-                modularStart = treeModularStart centerX
-                modularCenterX = treeModular centerX
+                rearModularStart = (toFloat (floor ((state.centerX / 2) / width))) * width
+                rearX = rearModularStart + (state.centerX / 2)
+                middleModularStart = (toFloat (floor ((state.centerX / 4) / width))) * width
+                middleX = middleModularStart + (state.centerX / 4)
+            in C.group
+                [ C.move (halfStageWidth + rearX, stageDim.y / 2.0) rear
+                , C.move (halfStageWidth + rearX + width, stageDim.y / 2.0) rear
+                , C.move (halfStageWidth + rearX - width, stageDim.y / 2.0) rear
+                , C.move (halfStageWidth + middleX, stageDim.y / 2.0) middle
+                , C.move (halfStageWidth + middleX + width, stageDim.y / 2.0) middle
+                , C.move (halfStageWidth + middleX - width, stageDim.y / 2.0) middle
+                ]
 
-                treeToRender t =
-                    let visibleDistance = halfStageWidth + t.style.dim.x
-                    in if | abs( t.x                    - modularCenterX) < visibleDistance -> Just <| tree { t | x <- t.x + modularStart }
-                          | abs((t.x - treeCyclePeriod) - modularCenterX) < visibleDistance -> Just <| tree { t | x <- t.x + modularStart - treeCyclePeriod }
-                          | abs((t.x + treeCyclePeriod) - modularCenterX) < visibleDistance -> Just <| tree { t | x <- t.x + modularStart + treeCyclePeriod }
-                          | otherwise                                                       -> Nothing
-            in C.group <| Array.foldl (\ t fs -> treeToRender t |> Maybe.map (flip (::) fs) |> Maybe.withDefault fs) [] state.trees
+        trees = C.group <| List.map tree <| state.visibleTrees
         tree { style, x } =
             let (width, height) = Vector.toTupleTruncate style.dim
             in C.moveX x <| C.moveY (style.dim.y / 2.0) <| C.toForm <| E.image width height style.path
@@ -320,7 +339,32 @@ displayGoing (w, h) timeDelta state =
                 ]
         hud = C.group
             [
-                C.toForm <| Text.centered <| Text.style (Text.defaultStyle |> \ s -> { s | color <- Color.white }) <| Text.fromString <| toString (treeModular centerX)
+                -- C.toForm <| Text.centered <| Text.style (Text.defaultStyle |> \ s -> { s | color <- Color.white }) <| Text.fromString <| toString (treeModular centerX)
                 -- [C.toForm <| Text.centered <| Text.fromString <| toString first]
             ]
     in C.collage w h [ C.filled Color.black <| C.rect (toFloat w) (toFloat h), stage, hud ]
+
+
+
+main : Signal Element
+main = Gamepad.withPolling (Signal.constant True) <| \ _ ->
+    display <~ Window.dimensions ~ delta ~ gameState
+
+delta     : Signal Float
+delta     = Time.fps 30
+gameState : Signal GameState
+gameState = Signal.foldp stepGame initialState input
+input     : Signal Input
+input     = Signal.sampleOn delta (Input <~ delta ~ controls)
+controls  : Signal Controls
+controls  = Controls <~ playerControls 0 ~ playerControls 1
+playerControls : Gamepad -> Signal PlayerControls
+playerControls controller =
+    let processStick = filterStick << flipStick << uncurry Vect
+        flipStick { x, y } = { x = x, y = negate y }
+        filterStick v = if Vector.magnitude v < 0.3 then Vector.zero else v
+    in PlayerControls
+            <~ (processStick <~ XB.leftStick controller)
+             ~ (processStick <~ XB.rightStick controller)
+             ~ XB.rb controller
+             ~ XB.a controller

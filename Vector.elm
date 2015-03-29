@@ -67,3 +67,7 @@ yUnit = { x = 0.0, y = 1.0 }
 zero : Vect
 zero = { x = 0.0, y = 0.0 }
 
+timeScale : Float -> Vect -> Vect -> Vect
+timeScale timeDelta vel pos =
+    vadd pos (scale (timeDelta / 1000.0) vel)
+
