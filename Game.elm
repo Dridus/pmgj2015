@@ -1,5 +1,23 @@
+--
+-- Awesometown game jam game that's not really working!
+-- XBox 360 style controls are supported and recommended.
+-- Also supports keyboard for playing around:
+--
+--             Player 1         Player 2
+--               up                W
+--  Move     left   right      A       D
+--               down              S
+--
+--                I                T
+--  Aim        J     L         F       H
+--                K                G
+--
+--  Shoot         N                Z
+--  Jump          M                X
+
 import Array
 import Array (Array)
+import Char
 import Color
 import Debug
 import Gamepad
@@ -9,6 +27,7 @@ import Graphics.Collage as C
 import Graphics.Collage (Form)
 import Graphics.Element as E
 import Graphics.Element (Element)
+import Keyboard
 import List
 import Maybe
 import Maybe (Maybe(Just, Nothing))
@@ -630,8 +649,15 @@ playerControls controller =
     let processStick = filterStick << flipStick << uncurry Vect
         flipStick { x, y } = { x = x, y = negate y }
         filterStick v = if Vector.magnitude v < 0.3 then Vector.zero else v
+        eitherAxis a b = if a < 0.01 then b else a
+        eitherStick a b = { x = eitherAxis a.x b.x, y = eitherAxis a.y b.y }
+        (shootKey, jumpKey, moveKeys, aimKeys) =
+            case controller of
+                0 -> (Char.toCode 'N', Char.toCode 'M', Keyboard.arrows, Keyboard.directions (Char.toCode 'I') (Char.toCode 'K') (Char.toCode 'H') (Char.toCode 'L'))
+                _ -> (Char.toCode 'Z', Char.toCode 'X', Keyboard.wasd,   Keyboard.directions (Char.toCode 'T') (Char.toCode 'G') (Char.toCode 'F') (Char.toCode 'H'))
+        keyboardStick { x, y } = Vect (toFloat x) (toFloat y)
     in PlayerControls
-            <~ (processStick <~ XB.leftStick controller)
-             ~ (processStick <~ XB.rightStick controller)
-             ~ XB.rb controller
-             ~ XB.a controller
+            <~ (eitherStick <~ (processStick <~ XB.leftStick controller) ~ (keyboardStick <~ moveKeys))
+             ~ (eitherStick <~ (processStick <~ XB.rightStick controller) ~ (keyboardStick <~ aimKeys))
+             ~ ((||) <~ XB.rb controller ~ Keyboard.isDown shootKey)
+             ~ ((||) <~ XB.a controller ~ Keyboard.isDown jumpKey)
