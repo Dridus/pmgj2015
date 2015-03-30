@@ -6,6 +6,7 @@ import Gamepad
 import Gamepad (Gamepad)
 import Gamepad.XBox as XB
 import Graphics.Collage as C
+import Graphics.Collage (Form)
 import Graphics.Element as E
 import Graphics.Element (Element)
 import List
@@ -74,10 +75,20 @@ grappleForce : Float
 grappleForce = 40.0
 
 grappleOffset : Vect
-grappleOffset = Vect 0.0 1.75
+grappleOffset = Vect 0.0 1.55
 
 maxRopeLength : Float
 maxRopeLength = 7.0
+
+numberOfWalkFrames : Int
+numberOfWalkFrames = 3
+
+walkFrameInterval : Float
+walkFrameInterval = 0.25
+
+lanternHitDistance : Float
+lanternHitDistance = 1.0
+
 
 type alias PlayerControls =
     { move  : Vect
@@ -99,7 +110,11 @@ type alias Input =
 type GameState = Preparing | Going GoingState | Dancing DancingState | Won
 
 type alias TreeInstance = { style : TreeStyle, x : Float }
-type alias TreeStyle = { path : String, dim : Vect }
+type alias TreeStyle =
+    { path     : String
+    , dim      : Vect
+    , lanterns : Array Vect
+    }
 
 type alias GoingState =
     { first        : PlayerGoing
@@ -119,16 +134,36 @@ type alias PlayerGoing =
     , grapple  : Maybe Grapple
     , jump     : Bool
     , shoot    : Bool
+    , onGround : Bool
     }
 
 type alias DancingState = {}
 
+treeScale : Float
+treeScale = stageDim.y / 1080.0
+
+lanternPointToScene : Float -> Vect -> Vect
+lanternPointToScene nativeWidth =
+    Vector.scale treeScale << \ { x, y } -> { x = x - nativeWidth / 2, y = negate y + 1080 }
+
 tree1 : TreeStyle
-tree1 = { path = "Assets/tree1.png", dim = { x = 566 * (stageDim.y / 1080), y = stageDim.y } }
+tree1 =
+    { path     = "Assets/tree1.png"
+    , dim      = { x = 566 * treeScale, y = stageDim.y }
+    , lanterns = Array.map (lanternPointToScene 566) <| Array.fromList [{ x = 182, y = 692 }, { x = 368, y = 329 }]
+    }
 tree2 : TreeStyle
-tree2 = { path = "Assets/tree2.png", dim = { x = 537 * (stageDim.y / 1080), y = stageDim.y } }
+tree2 =
+    { path     = "Assets/tree2.png"
+    , dim      = { x = 537 * treeScale, y = stageDim.y }
+    , lanterns = Array.map (lanternPointToScene 537) <| Array.fromList [{ x = 354, y = 649 }, { x = 356, y = 320 }, { x = 194, y = 194 }]
+    }
 tree3 : TreeStyle
-tree3 = { path = "Assets/tree3.png", dim = { x = 325 * (stageDim.y / 1080), y = stageDim.y } }
+tree3 =
+    { path     = "Assets/tree3.png"
+    , dim      = { x = 325 * treeScale, y = stageDim.y }
+    , lanterns = Array.map (lanternPointToScene 325) <| Array.fromList [{ x = 163, y = 756 }, { x = 79, y = 498 }, { x = 280, y = 173 }]
+    }
 
 treeStyles : List TreeStyle
 treeStyles =
@@ -136,6 +171,53 @@ treeStyles =
     , tree2
     , tree3
     ]
+
+type alias OrientedForm =
+    { rightward : Form
+    , leftward  : Form
+    }
+
+type alias PlayerStyle =
+    { walking          : Array OrientedForm
+    , flying           : OrientedForm
+    , swingingForward  : OrientedForm
+    , swingingBackward : OrientedForm
+    }
+
+playerImage : String -> Form
+playerImage = C.toForm << E.image 512 512
+
+whitePlayer : PlayerStyle
+whitePlayer =
+    { walking = Array.fromList [ { rightward = playerImage "Assets/nimbus-right-white-walk1.png"
+                                 , leftward  = playerImage "Assets/nimbus-left-white-walk1.png" }
+                               , { rightward = playerImage "Assets/nimbus-right-white-walk2.png"
+                                 , leftward  = playerImage "Assets/nimbus-left-white-walk2.png" }
+                               , { rightward = playerImage "Assets/nimbus-right-white-walk3.png"
+                                 , leftward  = playerImage "Assets/nimbus-left-white-walk3.png" } ]
+    , flying           = { rightward = playerImage "Assets/nimbus-right-white-flying.png"
+                         , leftward  = playerImage "Assets/nimbus-left-white-flying.png" }
+    , swingingForward  = { rightward = playerImage "Assets/nimbus-right-white-swing-forward.png"
+                         , leftward  = playerImage "Assets/nimbus-left-white-swing-forward.png" }
+    , swingingBackward = { rightward = playerImage "Assets/nimbus-right-white-swing-back.png"
+                         , leftward  = playerImage "Assets/nimbus-left-white-swing-back.png" }
+    }
+
+blackPlayer : PlayerStyle
+blackPlayer =
+    { walking = Array.fromList [ { rightward = playerImage "Assets/nimbus-right-black-walk1.png"
+                                 , leftward  = playerImage "Assets/nimbus-left-black-walk1.png" }
+                               , { rightward = playerImage "Assets/nimbus-right-black-walk2.png"
+                                 , leftward  = playerImage "Assets/nimbus-left-black-walk2.png" }
+                               , { rightward = playerImage "Assets/nimbus-right-black-walk3.png"
+                                 , leftward  = playerImage "Assets/nimbus-left-black-walk3.png" } ]
+    , flying           = { rightward = playerImage "Assets/nimbus-right-black-flying.png"
+                         , leftward  = playerImage "Assets/nimbus-left-black-flying.png" }
+    , swingingForward  = { rightward = playerImage "Assets/nimbus-right-black-swing-forward.png"
+                         , leftward  = playerImage "Assets/nimbus-left-black-swing-forward.png" }
+    , swingingBackward = { rightward = playerImage "Assets/nimbus-right-black-swing-back.png"
+                         , leftward  = playerImage "Assets/nimbus-left-black-swing-back.png" }
+    }
 
 makeTreeCycle : Random.Seed -> (Array TreeInstance, Random.Seed)
 makeTreeCycle seed =
@@ -179,6 +261,7 @@ initialPlayerGoing =
     , grapple  = Nothing
     , jump     = False
     , shoot    = False
+    , onGround = True
     }
 
 computeVisibleTrees : Array TreeInstance -> Float -> List TreeInstance
@@ -206,8 +289,8 @@ stepGoing : Float -> Controls -> GoingState -> GameState
 stepGoing timeDelta controls gs =
     let
 
-        newFirst        = stepPlayerGoing timeDelta controls.first  gs.first
-        newSecond       = stepPlayerGoing timeDelta controls.second gs.second
+        newFirst        = stepPlayerGoing timeDelta controls.first  gs gs.first
+        newSecond       = stepPlayerGoing timeDelta controls.second gs gs.second
 
         newCenterX      = (newFirst.vp.pos.x + newSecond.vp.pos.x) / 2
 
@@ -223,8 +306,8 @@ stepGoing timeDelta controls gs =
         , maxX         = newCenterX + stageDim.x / 2.0
         }
 
-stepPlayerGoing : Float -> PlayerControls -> PlayerGoing -> PlayerGoing
-stepPlayerGoing timeDelta pc pg =
+stepPlayerGoing : Float -> PlayerControls -> GoingState -> PlayerGoing -> PlayerGoing
+stepPlayerGoing timeDelta pc gs pg =
     let
 
         newAim : Maybe Float
@@ -266,34 +349,33 @@ stepPlayerGoing timeDelta pc pg =
 
         applyRope : Vect -> Vect
         applyRope vec = vec -- FIXME
-        {-
-        ropeClamp pos =
-            case pg.grapple of
-                Just { vp, fixed } ->
-                    if not fixed
-                        then pos
-                        else
-                            let mag = Vector.magnitude (Vector.vsub pg.vp.pos vp.pos)
-                            in Vector.smul (Vector.normalize (Vector.vsub pos vp.pos)) mag
-                Nothing -> pos
-        -}
 
-        newVel : Vect
-        newVel = pg.vp.vel
+        newVelBeforeRope : Vect
+        newVelBeforeRope = pg.vp.vel
             |> Vector.vadd jumpVect -- FIXME? because instantaneous, don't apply time scaling
             |> applyControlForce
             |> Vector.addTimeScaled timeDelta gravityVect
             |> applyDrag
             |> applyStoppingForce
-            |> applyRope
 
         groundClamp : Vect -> Vect
         groundClamp pos = { pos | y <- max groundY pos.y }
 
-        newPos : Vect
-        newPos = pg.vp.pos
-            |> Vector.addTimeScaled timeDelta newVel
+        newPosBeforeRope : Vect
+        newPosBeforeRope = pg.vp.pos
+            |> Vector.addTimeScaled timeDelta newVelBeforeRope
             |> groundClamp
+
+        newVP =
+            let
+                vp = { vel = newVelBeforeRope, pos = newPosBeforeRope }
+            in case pg.grapple of
+                Just g ->
+                    if g.fixed
+                        then applyRopeLength g.vp.pos vp
+                        else vp
+                Nothing ->
+                    vp
 
         didShoot : Bool
         didShoot = pc.shoot && not pg.shoot
@@ -311,7 +393,7 @@ stepPlayerGoing timeDelta pc pg =
                 newDanglingPos = Vector.vadd anchor <| Vector.rotate posRotateAngle <| Vector.scale maxRopeLength <| Vector.normalize rel
 
                 velRotateAngle = if Vector.angleDelta rel Vector.yUnit > 0 then Vector.angle rel - pi/2 - rotateAngularDistance else Vector.angle rel + pi/2 + rotateAngularDistance
-                magnitudeLoss = Vector.magnitude <| Vector.vsub danglingVP.pos newDanglingPos
+                magnitudeLoss = 0.0 --Vector.magnitude <| Vector.vsub danglingVP.pos newDanglingPos
                 newDanglingVel = Vector.xUnit
                     |> Vector.rotate velRotateAngle
                     |> Vector.scale (Vector.magnitude danglingVP.vel - magnitudeLoss)
@@ -337,9 +419,7 @@ stepPlayerGoing timeDelta pc pg =
                                     }
                                 Nothing -> Nothing
                 else
-                    case pg.grapple of
-                        Just g -> applyGrapplePhysics g
-                        Nothing -> Nothing
+                    pg.grapple `Maybe.andThen` applyGrapplePhysics `Maybe.andThen` (Just << grappleHitTest)
 
         applyGrapplePhysics : Grapple -> Maybe Grapple
         applyGrapplePhysics g =
@@ -349,18 +429,39 @@ stepPlayerGoing timeDelta pc pg =
                     let newGVel = g.vp.vel
                             |> Vector.addTimeScaled timeDelta gravityVect
                             |> applyDrag
-                        newGVP = applyRopeLength newPos { vel = newGVel, pos = Vector.addTimeScaled timeDelta newGVel g.vp.pos }
+                        newGVP = applyRopeLength newPosBeforeRope { vel = newGVel, pos = Vector.addTimeScaled timeDelta newGVel g.vp.pos }
                     in
                         if newGVP.pos.y <= groundY
                             then Nothing
                             else Just { g | vp <- newGVP }
 
+        grappleHitTest : Grapple -> Grapple
+        grappleHitTest g =
+            if g.fixed
+                then g
+                else
+                    let
+
+                        allLanterns = flip List.concatMap gs.visibleTrees <| \ t ->
+                            List.map (\ l -> (t, Vector.vadd l <| Vect t.x 0.0)) <| Array.toList t.style.lanterns
+
+                        hitTest (t, l) =
+                            if Vector.dist l g.vp.pos < lanternHitDistance
+                                then Just (t, l)
+                                else Nothing
+
+                    in
+                        case Maybe.oneOf <| List.map hitTest allLanterns of
+                            Just (t, l) -> { fixed = True, vp = { vel = Vector.zero, pos = l } }
+                            Nothing -> g
+
     in
-        { aim     = newAim
-        , vp      = { vel = newVel, pos = newPos }
-        , jump    = pc.jump
-        , shoot   = pc.shoot
-        , grapple = newGrapple
+        { aim      = newAim
+        , vp       = newVP
+        , jump     = pc.jump
+        , shoot    = pc.shoot
+        , onGround = onGround
+        , grapple  = newGrapple
         }
 
 display : (Int, Int) -> Float -> GameState -> Element
@@ -420,7 +521,7 @@ displayGoing (w, h) timeDelta state =
         trees = C.group <| List.map tree <| state.visibleTrees
         tree { style, x } =
             let (width, height) = Vector.toTupleTruncate style.dim
-            in C.moveX x <| C.moveY (style.dim.y / 2.0) <| C.toForm <| E.image width height style.path
+            in C.moveX x <| C.move (0.0, style.dim.y / 2.0) <| C.toForm <| E.image width height style.path
 
         reticle pg =
             case pg.aim of
@@ -438,15 +539,42 @@ displayGoing (w, h) timeDelta state =
 
                 Nothing -> C.group []
 
-        player color pg =
-            C.move (Vector.toTuple pg.vp.pos) <| C.moveY 1.0 <| C.group
-                [ reticle pg, C.filled color <| C.rect 0.5 2.0 ]
+        player variant pg =
+            let
+
+                walkFrame = truncate <| (pg.vp.pos.x - roundDownModulus (walkFrameInterval * toFloat numberOfWalkFrames) pg.vp.pos.x) / walkFrameInterval
+                nonSwingImage =
+                    case (pg.onGround, pg.vp.vel.x >= 0) of
+                        (True,  True ) -> Array.get walkFrame variant.walking |> forceMaybe |> .rightward
+                        (True,  False) -> Array.get walkFrame variant.walking |> forceMaybe |> .leftward
+                        (False, True ) -> variant.flying.rightward
+                        (False, False) -> variant.flying.leftward
+
+                image =
+                    case pg.grapple of
+                        Just g ->
+                            if g.fixed
+                                then
+                                    case (g.vp.pos.x > pg.vp.pos.x, pg.vp.vel.x >= 0) of
+                                        (True,  True ) -> variant.swingingForward.rightward
+                                        (False, True ) -> variant.swingingForward.leftward
+                                        (True,  False) -> variant.swingingBackward.rightward
+                                        (False, False) -> variant.swingingBackward.leftward
+                                else
+                                    nonSwingImage
+                        Nothing ->
+                            nonSwingImage
+
+            in
+                C.move (Vector.toTuple pg.vp.pos) <| C.moveY 1.5 <| C.group
+                    [ reticle pg
+                    , C.scale (1/128) image ]
         stage =
             C.groupTransform (T2D.multiply stageScaleXf stageTranslationXf)
                 [ trees
-                , player Color.red state.first
+                , player whitePlayer state.first
                 , rope state.first
-                , player Color.blue state.second
+                , player blackPlayer state.second
                 , rope state.second
                 ]
         hud = C.group
@@ -460,6 +588,12 @@ displayGoing (w, h) timeDelta state =
         , stage
         , hud
         ]
+
+forceMaybe : Maybe a -> a
+forceMaybe m =
+    case m of
+        Just a  -> a
+        Nothing -> Debug.crash "force NOTHING"
 
 ropeStyle : C.LineStyle
 ropeStyle =
