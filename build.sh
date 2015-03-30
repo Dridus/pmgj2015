@@ -1,2 +1,2 @@
-elm-make Game.elm --output=main.html
+elm-make Game.elm --output=index.html
 
