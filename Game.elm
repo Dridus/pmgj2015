@@ -649,7 +649,7 @@ playerControls controller =
     let processStick = filterStick << flipStick << uncurry Vect
         flipStick { x, y } = { x = x, y = negate y }
         filterStick v = if Vector.magnitude v < 0.3 then Vector.zero else v
-        eitherStick a b = Vector.vadd
+        eitherStick = Vector.vadd
         (shootKey, jumpKey, moveKeys, aimKeys) =
             case controller of
                 0 -> (Char.toCode 'N', Char.toCode 'M', Keyboard.arrows, Keyboard.directions (Char.toCode 'I') (Char.toCode 'K') (Char.toCode 'H') (Char.toCode 'L'))
